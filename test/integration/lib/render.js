@@ -192,6 +192,7 @@ async function renderMap(style, options) {
         attributionControl: false,
         preserveDrawingBuffer: true,
         axonometric: options.axonometric || false,
+        spriteFormat: options.spriteFormat ?? 'auto',
         skew: options.skew || [0, 0],
         scaleFactor: options.scaleFactor || 1,
         fadeDuration: options.fadeDuration || 0,
@@ -204,10 +205,10 @@ async function renderMap(style, options) {
         contextCreateOptions: {
             // Anisotropic filtering is disabled
             extTextureFilterAnisotropicForceOff: true,
-            // By default standard derivatives are disabled for testing
-            extStandardDerivativesForceOff: !options.standardDerivatives,
             // OES_texture_float_linear is enabled by default
             extTextureFloatLinearForceOff: options.textureFloatLinear === undefined ? false : !options.textureFloatLinear,
+            // ordinary instancing is enabled by default, manual is disabled
+            forceManualRenderingForInstanceIDShaders: options.forceManualRenderingForInstanceIDShaders,
         }
     });
 
@@ -337,9 +338,17 @@ async function runTest(t) {
 
         const style = parseStyle(currentFixture);
         const options = parseOptions(currentFixture, style);
+
+        if (options.spriteFormat === 'icon_set' && style.sprite && !style.sprite.endsWith('.pbf')) {
+            style.sprite += '.pbf';
+        }
+
         const {actualImageData, w, h} = await getActualImage(style, options);
 
-        if (process.env.UPDATE) {
+        const { minDiff, minDiffImage, minExpectedCanvas, minImageSrc } = calculateDiff(actualImageData, expectedImages, { w, h }, options['diff-calculation-threshold']);
+        const pass = minDiff <= options.allowed;
+
+        if (!pass && !t._todo && process.env.UPDATE) {
             browserWriteFile.postMessage([{
                 path: `${writeFileBasePath}/expected.png`,
                 data: getActualImageDataURL(actualImageData, map, {w, h}, options).split(',')[1]
@@ -347,8 +356,7 @@ async function runTest(t) {
 
             return;
         }
-        const {minDiff, minDiffImage, minExpectedCanvas, minImageSrc} = calculateDiff(actualImageData, expectedImages, {w, h}, options['diff-calculation-threshold']);
-        const pass = minDiff <= options.allowed;
+
         const testMetaData = {
             name: currentTestName,
             minDiff: Math.round(100000 * minDiff) / 100000,

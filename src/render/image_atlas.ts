@@ -2,6 +2,7 @@ import assert from 'assert';
 import {RGBAImage} from '../util/image';
 import {register} from '../util/web_worker_transfer';
 import potpack from 'potpack';
+import {ImageIdWithOptions} from '../style-spec/expression/types/image_id_with_options';
 
 import type {StyleImage} from '../style/style_image';
 import type ImageManager from './image_manager';
@@ -20,6 +21,11 @@ type Rect = {
     h: number;
 };
 
+type ImagePositionScale = {
+    x: number;
+    y: number;
+}
+
 export class ImagePosition implements SpritePosition {
     paddedRect: Rect;
     pixelRatio: number;
@@ -28,6 +34,22 @@ export class ImagePosition implements SpritePosition {
     stretchX: Array<[number, number]> | null | undefined;
     content: [number, number, number, number] | null | undefined;
     padding: number;
+    sdf: boolean;
+    scale: ImagePositionScale;
+
+    static getImagePositionScale(imageIdWithOptions: ImageIdWithOptions | undefined, usvg: boolean, pixelRatio: number): ImagePositionScale {
+        if (usvg && imageIdWithOptions && imageIdWithOptions.options && imageIdWithOptions.options.transform) {
+            return {
+                x: imageIdWithOptions.options.transform.a,
+                y: imageIdWithOptions.options.transform.d
+            };
+        } else {
+            return {
+                x: pixelRatio,
+                y: pixelRatio
+            };
+        }
+    }
 
     constructor(paddedRect: Rect, {
         pixelRatio,
@@ -35,7 +57,9 @@ export class ImagePosition implements SpritePosition {
         stretchX,
         stretchY,
         content,
-    }: StyleImage, padding: number) {
+        sdf,
+        usvg,
+    }: StyleImage, padding: number, imageIdWithOptions?: ImageIdWithOptions) {
         this.paddedRect = paddedRect;
         this.pixelRatio = pixelRatio;
         this.stretchX = stretchX;
@@ -43,6 +67,8 @@ export class ImagePosition implements SpritePosition {
         this.content = content;
         this.version = version;
         this.padding = padding;
+        this.sdf = sdf;
+        this.scale = ImagePosition.getImagePositionScale(imageIdWithOptions, usvg, pixelRatio);
     }
 
     get tl(): [number, number] {
@@ -61,8 +87,8 @@ export class ImagePosition implements SpritePosition {
 
     get displaySize(): [number, number] {
         return [
-            (this.paddedRect.w - this.padding * 2) / this.pixelRatio,
-            (this.paddedRect.h - this.padding * 2) / this.pixelRatio
+            (this.paddedRect.w - this.padding * 2) / this.scale.x,
+            (this.paddedRect.h - this.padding * 2) / this.scale.y
         ];
     }
 }
@@ -77,6 +103,7 @@ export default class ImageAtlas {
     };
     haveRenderCallbacks: Array<string>;
     uploaded: boolean | null | undefined;
+    lut: LUT | null;
 
     constructor(icons: {
         [_: string]: StyleImage;
@@ -129,6 +156,7 @@ export default class ImageAtlas {
             RGBAImage.copy(src.data, image, {x: w - padding, y: 0}, {x: x - padding, y: y + h}, {width: padding, height: padding}, lut); // BR
         }
 
+        this.lut = lut;
         this.image = image;
         this.iconPositions = iconPositions;
         this.patternPositions = patternPositions;
@@ -149,10 +177,11 @@ export default class ImageAtlas {
                 h: src.data.height + 2 * padding,
             };
             bins.push(bin);
-            positions[id] = new ImagePosition(bin, src, padding);
+            const imageIdWithOptions = ImageIdWithOptions.deserializeFromString(id);
+            positions[id] = new ImagePosition(bin, src, padding, imageIdWithOptions);
 
             if (src.hasRenderCallback) {
-                this.haveRenderCallbacks.push(id);
+                this.haveRenderCallbacks.push(imageIdWithOptions.id);
             }
         }
     }
@@ -160,9 +189,19 @@ export default class ImageAtlas {
     patchUpdatedImages(imageManager: ImageManager, texture: Texture, scope: string) {
         this.haveRenderCallbacks = this.haveRenderCallbacks.filter(id => imageManager.hasImage(id, scope));
         imageManager.dispatchRenderCallbacks(this.haveRenderCallbacks, scope);
+
         for (const name in imageManager.getUpdatedImages(scope)) {
-            this.patchUpdatedImage(this.iconPositions[name], imageManager.getImage(name, scope), texture);
-            this.patchUpdatedImage(this.patternPositions[name], imageManager.getImage(name, scope), texture);
+            for (const id of Object.keys(this.iconPositions)) {
+                if (ImageIdWithOptions.deserializeId(id) === name) {
+                    this.patchUpdatedImage(this.iconPositions[id], imageManager.getImage(name, scope), texture);
+                }
+            }
+
+            for (const id of Object.keys(this.patternPositions)) {
+                if (ImageIdWithOptions.deserializeId(id) === name) {
+                    this.patchUpdatedImage(this.patternPositions[id], imageManager.getImage(name, scope), texture);
+                }
+            }
         }
     }
 
@@ -173,7 +212,15 @@ export default class ImageAtlas {
 
         position.version = image.version;
         const [x, y] = position.tl;
-        texture.update(image.data, {position: {x, y}});
+        const overrideRGBWithWhite = position.sdf;
+        if (this.lut || overrideRGBWithWhite) {
+            const size = {width: image.data.width, height: image.data.height};
+            const imageToUpload = new RGBAImage(size);
+            RGBAImage.copy(image.data, imageToUpload, {x: 0, y: 0}, {x: 0, y: 0}, size, this.lut, overrideRGBWithWhite);
+            texture.update(imageToUpload, {position: {x, y}});
+        } else {
+            texture.update(image.data, {position: {x, y}});
+        }
     }
 
 }
