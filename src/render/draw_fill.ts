@@ -1,4 +1,5 @@
 import Color from '../style-spec/util/color';
+import ResolvedImage from '../style-spec/expression/types/resolved_image';
 import DepthMode from '../gl/depth_mode';
 import CullFaceMode from '../gl/cull_face_mode';
 import {
@@ -8,6 +9,7 @@ import {
     fillOutlinePatternUniformValues
 } from './program/fill_program';
 import StencilMode from '../gl/stencil_mode';
+import browser from '../util/browser';
 
 import type Painter from './painter';
 import type SourceCache from '../source/source_cache';
@@ -106,7 +108,8 @@ function drawFillTiles(painter: Painter, sourceCache: SourceCache, layer: FillSt
         const constantPattern = patternProperty.constantOr(null);
         if (constantPattern && tile.imageAtlas) {
             const atlas = tile.imageAtlas;
-            const posTo = atlas.patternPositions[constantPattern.toString()];
+            const patternImage = ResolvedImage.from(constantPattern).getPrimary().scaleSelf(browser.devicePixelRatio).serialize();
+            const posTo = atlas.patternPositions[patternImage];
             if (posTo) programConfiguration.setConstantPatternPositions(posTo);
         }
 

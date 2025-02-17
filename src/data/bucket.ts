@@ -17,6 +17,8 @@ import type {ProjectionSpecification} from '../style-spec/types';
 import type {VectorTileFeature, VectorTileLayer} from '@mapbox/vector-tile';
 import type {TileFootprint} from '../../3d-style/util/conflation';
 import type {LUT} from "../util/lut";
+import type {ImageIdWithOptions} from '../style-spec/expression/types/image_id_with_options';
+import type {ElevationFeature} from './elevation_feature';
 
 export type BucketParameters<Layer extends TypedStyleLayer> = {
     index: number;
@@ -35,12 +37,14 @@ export type BucketParameters<Layer extends TypedStyleLayer> = {
 
 export type PopulateParameters = {
     featureIndex: FeatureIndex;
-    iconDependencies: Record<any, any>;
-    patternDependencies: Record<any, any>;
+    iconDependencies: Record<string, Array<ImageIdWithOptions>>;
+    patternDependencies: Record<string, Array<ImageIdWithOptions>>;
     glyphDependencies: Record<any, any>;
     availableImages: Array<string>;
     lineAtlas: LineAtlas;
     brightness: number | null | undefined;
+    scaleFactor: number;
+    elevationFeatures: ElevationFeature[] | undefined;
 };
 
 export type IndexedFeature = {
@@ -103,6 +107,8 @@ export interface Bucket {
         vtLayer: VectorTileLayer,
         availableImages: Array<string>,
         imagePositions: SpritePositions,
+        layers: Array<TypedStyleLayer>,
+        isBrightnessChanged: boolean,
         brightness?: number | null,
     ) => void;
     isEmpty: () => boolean;
