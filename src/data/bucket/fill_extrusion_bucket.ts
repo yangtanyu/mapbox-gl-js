@@ -59,6 +59,7 @@ import type {TileTransform} from '../../geo/projection/tile_transform';
 import type {VectorTileLayer} from '@mapbox/vector-tile';
 import type {TileFootprint} from '../../../3d-style/util/conflation';
 import type {WallGeometry} from '../../geo/line_geometry';
+import type {TypedStyleLayer} from '../../style/style_layer/typed_style_layer';
 
 export const fillExtrusionDefaultDataDrivenProperties: Array<string> = [
     'fill-extrusion-base',
@@ -558,9 +559,9 @@ export class GroundEffect {
         this.programConfigurations.upload(context);
     }
 
-    update(states: FeatureStates, vtLayer: VectorTileLayer, layers: any, availableImages: Array<string>, imagePositions: SpritePositions, brightness?: number | null) {
+    update(states: FeatureStates, vtLayer: VectorTileLayer, layers: any, availableImages: Array<string>, imagePositions: SpritePositions, isBrightnessChanged: boolean, brightness?: number | null) {
         if (!this.hasData()) return;
-        this.programConfigurations.updatePaintArrays(states, vtLayer, layers, availableImages, imagePositions, brightness);
+        this.programConfigurations.updatePaintArrays(states, vtLayer, layers, availableImages, imagePositions, isBrightnessChanged, brightness);
     }
 
     updateHiddenByLandmark(data: PartData) {
@@ -636,6 +637,7 @@ class FillExtrusionBucket implements Bucket {
     layerIds: Array<string>;
     stateDependentLayers: Array<FillExtrusionStyleLayer>;
     stateDependentLayerIds: Array<string>;
+    pixelRatio: number;
 
     layoutVertexArray: FillExtrusionLayoutArray;
     layoutVertexBuffer: VertexBuffer;
@@ -669,6 +671,8 @@ class FillExtrusionBucket implements Bucket {
     centroidData: Array<PartData>;
     // borders / borderDoneWithNeighborZ: 0 - left, 1, right, 2 - top, 3 - bottom
     borderDoneWithNeighborZ: Array<number>;
+    selfDEMTileTimestamp: number;
+    borderDEMTileTimestamp: Array<number>;
     needsCentroidUpdate: boolean;
     tileToMeter: number; // cache conversion.
     projection: ProjectionSpecification;
@@ -690,6 +694,7 @@ class FillExtrusionBucket implements Bucket {
         this.canonical = options.canonical;
         this.overscaling = options.overscaling;
         this.layers = options.layers;
+        this.pixelRatio = options.pixelRatio;
         this.layerIds = this.layers.map(layer => layer.fqid);
         this.index = options.index;
         this.hasPattern = false;
@@ -724,10 +729,12 @@ class FillExtrusionBucket implements Bucket {
 
     populate(features: Array<IndexedFeature>, options: PopulateParameters, canonical: CanonicalTileID, tileTransform: TileTransform) {
         this.features = [];
-        this.hasPattern = hasPattern('fill-extrusion', this.layers, options);
+        this.hasPattern = hasPattern('fill-extrusion', this.layers, this.pixelRatio, options);
         this.featuresOnBorder = [];
         this.borderFeatureIndices = [[], [], [], []];
         this.borderDoneWithNeighborZ = [-1, -1, -1, -1];
+        this.selfDEMTileTimestamp = Number.MAX_VALUE;
+        this.borderDEMTileTimestamp = [Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE];
         this.tileToMeter = tileToMeter(canonical);
 
         this.edgeRadius = this.layers[0].layout.get('fill-extrusion-edge-radius') / this.tileToMeter;
@@ -751,7 +758,7 @@ class FillExtrusionBucket implements Bucket {
             const vertexArrayOffset = this.layoutVertexArray.length;
             const featureIsPolygon = vectorTileFeatureTypes[bucketFeature.type] === 'Polygon';
             if (this.hasPattern) {
-                this.features.push(addPatternDependencies('fill-extrusion', this.layers, bucketFeature, this.zoom, options));
+                this.features.push(addPatternDependencies('fill-extrusion', this.layers, bucketFeature, this.zoom, this.pixelRatio, options));
             } else {
                 if (this.wallMode) {
                     for (const polygon of bucketFeature.geometry) {
@@ -795,12 +802,9 @@ class FillExtrusionBucket implements Bucket {
         }
     }
 
-    update(states: FeatureStates, vtLayer: VectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions, brightness?: number | null) {
-        const withStateUpdates = Object.keys(states).length !== 0;
-        if (withStateUpdates && !this.stateDependentLayers.length) return;
-        const layers = withStateUpdates ? this.stateDependentLayers : this.layers;
-        this.programConfigurations.updatePaintArrays(states, vtLayer, layers, availableImages, imagePositions, brightness);
-        this.groundEffect.update(states, vtLayer, layers, availableImages, imagePositions, brightness);
+    update(states: FeatureStates, vtLayer: VectorTileLayer, availableImages: Array<string>, imagePositions: SpritePositions, layers: Array<TypedStyleLayer>, isBrightnessChanged: boolean, brightness?: number | null) {
+        this.programConfigurations.updatePaintArrays(states, vtLayer, layers, availableImages, imagePositions, isBrightnessChanged, brightness);
+        this.groundEffect.update(states, vtLayer, layers, availableImages, imagePositions, isBrightnessChanged, brightness);
     }
 
     isEmpty(): boolean {

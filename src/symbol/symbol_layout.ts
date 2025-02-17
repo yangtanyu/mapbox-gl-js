@@ -12,7 +12,7 @@ import findPoleOfInaccessibility from '../util/find_pole_of_inaccessibility';
 import classifyRings from '../util/classify_rings';
 import EXTENT from '../style-spec/data/extent';
 import EvaluationParameters from '../style/evaluation_parameters';
-import {SIZE_PACK_FACTOR} from './symbol_size';
+import {getRasterizedIconSize, SIZE_PACK_FACTOR} from './symbol_size';
 import ONE_EM from './one_em';
 import Point from '@mapbox/point-geometry';
 import murmur3 from 'murmurhash-js';
@@ -177,6 +177,7 @@ export function performSymbolLayout(bucket: SymbolBucket,
                              tileZoom: number,
                              projection: Projection,
                              scaleFactor: number = 1,
+                             pixelRatio: number,
                              brightness?: number | null) {
     bucket.createArrays();
 
@@ -193,8 +194,10 @@ export function performSymbolLayout(bucket: SymbolBucket,
     sizes.scaleFactor = scaleFactor;
     sizes.textSizeScaleRange = layout.get('text-size-scale-range');
     sizes.iconSizeScaleRange = layout.get('icon-size-scale-range');
-    sizes.textScaleFactor = clamp(sizes.scaleFactor, sizes.textSizeScaleRange[0], sizes.textSizeScaleRange[1]);
-    sizes.iconScaleFactor = clamp(sizes.scaleFactor, sizes.iconSizeScaleRange[0], sizes.iconSizeScaleRange[1]);
+    const [textSizeScaleRangeMin, textSizeScaleRangeMax] = sizes.textSizeScaleRange;
+    const [iconSizeScaleRangeMin, iconSizeScaleRangeMax] = sizes.iconSizeScaleRange;
+    sizes.textScaleFactor = clamp(sizes.scaleFactor, textSizeScaleRangeMin, textSizeScaleRangeMax);
+    sizes.iconScaleFactor = clamp(sizes.scaleFactor, iconSizeScaleRangeMin, iconSizeScaleRangeMax);
 
     if (bucket.textSizeData.kind === 'composite') {
         const {minZoom, maxZoom} = bucket.textSizeData;
@@ -339,11 +342,14 @@ export function performSymbolLayout(bucket: SymbolBucket,
         let shapedIcon;
         let isSDFIcon = false;
         if (feature.icon && feature.icon.namePrimary) {
-            const image = imageMap[feature.icon.namePrimary];
+            const iconSizeFactor = getRasterizedIconSize(bucket.iconSizeData, unevaluatedLayoutValues['icon-size'], canonical, bucket.zoom, feature);
+            const scaleFactor = iconSizeFactor * sizes.iconScaleFactor * pixelRatio;
+            const primaryImageSerialized = feature.icon.getPrimary().scaleSelf(scaleFactor).serialize();
+            const image = imageMap[primaryImageSerialized];
             if (image) {
                 shapedIcon = shapeIcon(
-                    imagePositions[feature.icon.namePrimary],
-                    feature.icon.nameSecondary ? imagePositions[feature.icon.nameSecondary] : undefined,
+                    imagePositions[primaryImageSerialized],
+                    feature.icon.nameSecondary ? imagePositions[feature.icon.getSecondary().scaleSelf(scaleFactor).serialize()] : undefined,
 
                     layout.get('icon-offset').evaluate(feature, {}, canonical),
 
@@ -671,7 +677,7 @@ export function evaluateBoxCollisionFeature(
     shaped: any,
     padding: number,
     rotate: number,
-    textOffset?: [number, number] | null,
+    textOffset?: [number, number] | null
 ): number {
     let y1 = shaped.top;
     let y2 = shaped.bottom;
@@ -822,19 +828,17 @@ function addSymbol(bucket: SymbolBucket,
     // For more info check `updateVariableAnchors` in `draw_symbol.js` .
 
     if (shapedIcon) {
-
+        const sizeData = bucket.iconSizeData;
         const iconRotate = layer.layout.get('icon-rotate').evaluate(feature, {}, canonical);
         const iconQuads = getIconQuads(shapedIcon, iconRotate, isSDFIcon, hasIconTextFit, sizes.iconScaleFactor);
         const verticalIconQuads = verticallyShapedIcon ? getIconQuads(verticallyShapedIcon, iconRotate, isSDFIcon, hasIconTextFit, sizes.iconScaleFactor) : undefined;
-        iconBoxIndex = evaluateBoxCollisionFeature(collisionBoxArray, collisionFeatureAnchor, anchor, featureIndex, sourceLayerIndex, bucketIndex, shapedIcon, iconPadding, iconRotate);
+        iconBoxIndex = evaluateBoxCollisionFeature(collisionBoxArray, collisionFeatureAnchor, anchor, featureIndex, sourceLayerIndex, bucketIndex, shapedIcon, iconPadding, iconRotate, null);
         numIconVertices = iconQuads.length * 4;
 
-        const sizeData = bucket.iconSizeData;
         let iconSizeData = null;
 
         if (sizeData.kind === 'source') {
             iconSizeData = [
-
                 SIZE_PACK_FACTOR * layer.layout.get('icon-size').evaluate(feature, {}, canonical) * sizes.iconScaleFactor
             ];
             if (iconSizeData[0] > MAX_PACKED_SIZE) {
